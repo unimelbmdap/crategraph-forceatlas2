@@ -1,0 +1,16 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "crategraph-forceatlas2"
+version = "0.1.0"
+description = "Fast MIT-licensed ForceAtlas2 layout: a faithful Rust port of graphology-layout-forceatlas2"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = ["numpy>=1.24"]
+
+[tool.maturin]
+manifest-path = "bindings/Cargo.toml"
+module-name = "crategraph_forceatlas2._native"
+features = ["pyo3/extension-module"]

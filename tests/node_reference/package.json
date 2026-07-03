@@ -1,0 +1,11 @@
+{
+  "name": "cfa2-node-reference",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only parity reference: runs the real graphology-layout-forceatlas2.",
+  "dependencies": {
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1"
+  }
+}
