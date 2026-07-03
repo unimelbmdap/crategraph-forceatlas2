@@ -8,11 +8,19 @@ from a graph's node count.
 
 from __future__ import annotations
 
+import os
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
 from typing import Callable, Sequence
 
 import numpy as np
 
 from crategraph_forceatlas2 import _native
+
+try:
+    __version__ = _version("crategraph-forceatlas2")
+except PackageNotFoundError:  # not installed (e.g. source checkout on sys.path)
+    __version__ = "0.0.0+unknown"
 
 # Mirrors `cfa2_kernel::settings::Settings` field-for-field (camelCase, the
 # convention graphology-layout-forceatlas2 itself uses, so callers can reuse
@@ -72,8 +80,10 @@ def layout(
     coordinates; without it, `np.random.default_rng(seed).random((n_nodes,
     2))` is used. `iterations` defaults to `min(200, 50 + n_nodes // 100)`
     when omitted; `threads` (>=1) selects how many threads parallelise the
-    Barnes-Hut repulsion phase, defaulting to `1` (sequential). `progress`,
-    if given, is called after every iteration as `progress(i, iterations)`
+    Barnes-Hut repulsion phase, defaulting to `os.cpu_count()` (all cores);
+    pass `threads=1` for the sequential mode that reproduces the JS library
+    bit-for-bit. `progress`, if given, is called after every iteration as
+    `progress(i, iterations)`
     (1-based `i`); raising from it aborts the layout and propagates the
     exception. Remaining keyword arguments are ForceAtlas2 settings, named
     per graphology's camelCase convention (see `VALID_SETTINGS`).
@@ -125,7 +135,7 @@ def layout(
             raise ValueError("init must contain only finite values")
 
     if threads is None:
-        threads = 1
+        threads = os.cpu_count() or 1
     if not isinstance(threads, int) or isinstance(threads, bool) or threads < 1:
         raise ValueError(f"threads must be a positive integer, got {threads!r}")
 

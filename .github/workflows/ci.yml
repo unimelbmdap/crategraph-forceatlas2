@@ -37,10 +37,8 @@ jobs:
       - name: npm ci (node parity reference)
         working-directory: tests/node_reference
         run: npm ci
-      - name: pip install maturin
-        run: pip install maturin
-      - name: maturin develop
-        run: maturin develop
+      - name: pip install .
+        run: pip install .
       - name: pip install test dependencies
         run: pip install pytest numpy
       # The parity tests are the whole point of this job: they run the real
