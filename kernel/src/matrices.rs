@@ -103,6 +103,7 @@ pub fn graph_to_matrices(
 }
 
 #[cfg(test)]
+#[allow(clippy::erasing_op, clippy::identity_op)]
 mod tests {
     use super::*;
 

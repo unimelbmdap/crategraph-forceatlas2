@@ -480,10 +480,14 @@ pub(crate) fn apply_forces_phase(s: &Settings, nm: &mut [f32]) {
                 let force = f64::sqrt(crate::js_math::pow(dx, 2.0) + crate::js_math::pow(dy, 2.0));
 
                 if force > MAX_FORCE {
-                    dx = (dx * MAX_FORCE) / force;
-                    dy = (dy * MAX_FORCE) / force;
-                    nm[n + NODE_DX] = dx as f32;
-                    nm[n + NODE_DY] = dy as f32;
+                    nm[n + NODE_DX] = ((dx * MAX_FORCE) / force) as f32;
+                    nm[n + NODE_DY] = ((dy * MAX_FORCE) / force) as f32;
+                    // JS reads the capped, f32-rounded value back out of the
+                    // typed array for the downstream computations
+                    // (iterate.js:704-713); mirror that here rather than
+                    // keeping the un-rounded f64 locals.
+                    dx = f64::from(nm[n + NODE_DX]);
+                    dy = f64::from(nm[n + NODE_DY]);
                 }
 
                 let old_dx = f64::from(nm[n + NODE_OLD_DX]);
