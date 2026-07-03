@@ -1,0 +1,231 @@
+name: Wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Build: one abi3 (py310+) wheel per target platform, plus an sdist.
+  # ---------------------------------------------------------------------
+  build-manylinux:
+    name: build wheel (manylinux ${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist -i 3.10
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-manylinux-${{ matrix.target }}
+          path: dist/*.whl
+
+  build-macos:
+    name: build wheel (macos ${{ matrix.target }})
+    # macos-14 is an arm64 (Apple Silicon) runner; maturin-action cross
+    # compiles the x86_64 target from it via the rustup target + macOS SDK,
+    # same as it would on an Intel runner.
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist -i 3.10
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-macos-${{ matrix.target }}
+          path: dist/*.whl
+
+  build-windows:
+    name: build wheel (windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          architecture: x64
+      - name: Build abi3 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist -i 3.10
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-windows-x86_64
+          path: dist/*.whl
+
+  build-sdist:
+    name: build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # ---------------------------------------------------------------------
+  # Smoke test: for each built wheel, install it into a clean venv (no
+  # dev/build tooling) across Python {3.10, 3.13} x numpy {<2, >=2}, and run
+  # a minimal import + layout() call. This is NOT a parity check — the node
+  # parity gate lives in ci.yml — it only proves the wheel installs and the
+  # extension module loads on that platform/interpreter/numpy combination.
+  # ---------------------------------------------------------------------
+  smoke-native:
+    name: smoke (${{ matrix.platform }}, py${{ matrix.python-version }}, ${{ matrix.numpy-spec }})
+    needs: [build-manylinux, build-macos, build-windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x86_64, macos-x86_64, macos-aarch64, windows-x86_64]
+        python-version: ["3.10", "3.13"]
+        numpy-spec: ["numpy<2", "numpy>=2"]
+        # Extra keys merged onto every (platform, python-version, numpy-spec)
+        # combination whose `platform` matches — this does NOT add new job
+        # combinations, it just attaches `os` / `wheel-artifact` to the ones
+        # already produced by the three axes above.
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            wheel-artifact: wheel-manylinux-x86_64
+          - platform: macos-x86_64
+            os: macos-13
+            wheel-artifact: wheel-macos-x86_64
+          - platform: macos-aarch64
+            os: macos-14
+            wheel-artifact: wheel-macos-aarch64
+          - platform: windows-x86_64
+            os: windows-latest
+            wheel-artifact: wheel-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.wheel-artifact }}
+          path: dist
+      - name: Install into a clean venv and smoke-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .smoke-venv
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            source .smoke-venv/Scripts/activate
+          else
+            source .smoke-venv/bin/activate
+          fi
+          pip install "${{ matrix.numpy-spec }}"
+          pip install --no-index --find-links dist crategraph_forceatlas2
+          python -c "import crategraph_forceatlas2 as c; import numpy; print(c.layout(3, [(0,1),(1,2)], iterations=5).shape)"
+
+  smoke-linux-aarch64:
+    name: smoke (linux-aarch64 under QEMU, py${{ matrix.python-version }}, ${{ matrix.numpy-spec }})
+    needs: [build-manylinux]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+        numpy-spec: ["numpy<2", "numpy>=2"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-manylinux-aarch64
+          path: dist
+      # No native aarch64 Linux runner is used here on purpose (per the
+      # brief): the manylinux aarch64 wheel is smoke-tested by emulating
+      # aarch64 under QEMU via uraimo/run-on-arch-action, using the actual
+      # manylinux_2_28 aarch64 image (which ships every CPython under
+      # /opt/python/cpXYZ-cpXYZ/) so the interpreter matches what the wheel
+      # was built/tagged against.
+      - name: Install + smoke-test under QEMU
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: aarch64
+          distro: none
+          base_image: "quay.io/pypa/manylinux_2_28_aarch64"
+          githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --volume "${{ github.workspace }}/dist:/dist"
+          env: |
+            PY_ABI: ${{ matrix.python-version == '3.10' && 'cp310-cp310' || 'cp313-cp313' }}
+            NUMPY_SPEC: ${{ matrix.numpy-spec }}
+          run: |
+            set -euo pipefail
+            PYBIN="/opt/python/${PY_ABI}/bin"
+            "$PYBIN/pip" install "$NUMPY_SPEC"
+            "$PYBIN/pip" install --no-index --find-links /dist crategraph_forceatlas2
+            "$PYBIN/python" -c "import crategraph_forceatlas2 as c; import numpy; print(c.layout(3, [(0,1),(1,2)], iterations=5).shape)"
+
+  # ---------------------------------------------------------------------
+  # Publish: gated OFF until this pipeline has proven itself out. Flip
+  # `if: ${{ false }}` once satisfied, configure PyPI trusted publishing
+  # for this repo/workflow, and uncomment the publish step.
+  # ---------------------------------------------------------------------
+  publish:
+    name: publish to PyPI
+    if: ${{ false }} # enable when battle-tested
+    needs:
+      - build-manylinux
+      - build-macos
+      - build-windows
+      - build-sdist
+      - smoke-native
+      - smoke-linux-aarch64
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      # Trusted publishing (no API token/secret): register this repository
+      # + this workflow file as a trusted publisher for the
+      # `crategraph-forceatlas2` project at
+      # https://pypi.org/manage/project/crategraph-forceatlas2/settings/publishing/
+      # before flipping the job-level `if:` above.
+      # - name: Publish to PyPI
+      #   uses: pypa/gh-action-pypi-publish@release/v1
+      #   with:
+      #     packages-dir: dist
+      #     skip-existing: true

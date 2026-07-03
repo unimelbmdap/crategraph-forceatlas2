@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: cargo test + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo test --workspace
+        run: cargo test --workspace
+      - name: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  python:
+    name: pytest (parity mandatory) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: npm ci (node parity reference)
+        working-directory: tests/node_reference
+        run: npm ci
+      - name: pip install maturin
+        run: pip install maturin
+      - name: maturin develop
+        run: maturin develop
+      - name: pip install test dependencies
+        run: pip install pytest numpy
+      # The parity tests are the whole point of this job: they run the real
+      # graphology-layout-forceatlas2 (via tests/node_reference/reference.mjs)
+      # against crategraph_forceatlas2.layout() and assert bit-exact equality.
+      # A skip here (e.g. because node or its deps went missing) must NOT be
+      # silently treated as a pass, and a genuine test FAILURE must not be
+      # masked by piping through `tee`. Hence `set -o pipefail` (a pytest
+      # failure fails the piped step) plus a negated grep for "N skipped"
+      # (fails the step if ANY test was skipped for ANY reason).
+      - name: pytest (parity mandatory — no skips, no masked failures)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest tests/ -v -rs | tee out.log
+          ! grep -E "[1-9][0-9]* skipped" out.log
