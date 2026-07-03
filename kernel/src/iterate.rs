@@ -75,142 +75,86 @@ pub(crate) fn init_phase(s: &Settings, nm: &mut [f32]) -> f64 {
     outbound_att_compensation
 }
 
-/// Applies repulsion forces to every node's DX/DY, a verbatim port of
-/// `iterate.js:360-564`.
+/// Computes and applies Barnes-Hut repulsion for a single node, a verbatim
+/// extraction of the per-node tree walk from `repulsion_phase`'s
+/// `barnes_hut_optimize` branch (`iterate.js:368-497`).
 ///
-/// Branches on `s.barnes_hut_optimize`: when set, walks the `RegionMatrix`
-/// built by [`crate::quadtree::build`] per node (`iterate.js:368-497`);
-/// otherwise runs the O(n^2) pairwise loop (`iterate.js:501-564`). Both
-/// branches further split on `s.adjust_sizes` (JS's `adjustSizes`,
-/// anti-collision repulsion).
+/// `own` is that node's mutable slot chunk (`nm[n..n + PPN]`); `n` is its
+/// absolute `NodeMatrix` offset, used both to skip self-repulsion
+/// (`rn as usize != n`) and to index `snapshot`. `snapshot` is a read-only,
+/// f64-widened copy of the *entire* `NodeMatrix` taken before repulsion
+/// starts: other nodes' X/Y/mass never change during repulsion (only DX/DY,
+/// and only via each node's own chunk, are written), so reading them from
+/// the snapshot instead of a live `NodeMatrix` is numerically identical --
+/// it exists only so this function can be called from a `rayon` parallel
+/// chunk loop, where the aliasing rules forbid reading the full matrix
+/// while it is mutably chunked (Task 9). `coefficient` and `theta_squared`
+/// are `repulsion_phase`'s precomputed `s.scaling_ratio` and
+/// `s.barnes_hut_theta^2`, hoisted out of the per-node loop by the caller
+/// exactly as the JS does.
 ///
-/// The Barnes-Hut per-node walk reads only the tree (`rm`) plus its own
-/// node's slots and writes only its own node's DX/DY -- deliberately kept
-/// that way (no cross-node writes) so Task 9's per-node parallelism is
-/// sound.
-pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
-    let order = nm.len();
-    let coefficient = s.scaling_ratio;
+/// Used identically by the sequential path (`repulsion_phase` below, called
+/// from [`iterate`]) and the `rayon`-parallel path
+/// (`crate::layout::run_iteration_parallel`) -- one body, so the two can
+/// never drift out of bit-for-bit agreement.
+pub(crate) fn bh_node_repulsion(
+    s: &Settings,
+    own: &mut [f32],
+    n: usize,
+    snapshot: &[f64],
+    rm: &[f64],
+    coefficient: f64,
+    theta_squared: f64,
+) {
+    // Computing leaf quad nodes iteration.
+    let mut r: usize = 0; // Starting with root region.
+    loop {
+        if rm[r + REGION_FIRST_CHILD] >= 0.0 {
+            // The region has sub-regions.
 
-    if s.barnes_hut_optimize {
-        let theta_squared = s.barnes_hut_theta * s.barnes_hut_theta;
-
-        // Applying repulsion through regions (iterate.js:368-497).
-        let mut n = 0;
-        while n < order {
-            // Computing leaf quad nodes iteration.
-            let mut r: usize = 0; // Starting with root region.
-            loop {
-                if rm[r + REGION_FIRST_CHILD] >= 0.0 {
-                    // The region has sub-regions.
-
-                    // We run the Barnes Hut test to see if we are at the
-                    // right distance.
-                    let distance = crate::js_math::pow(
-                        f64::from(nm[n + NODE_X]) - rm[r + REGION_MASS_CENTER_X],
-                        2.0,
-                    ) + crate::js_math::pow(
-                        f64::from(nm[n + NODE_Y]) - rm[r + REGION_MASS_CENTER_Y],
+            // We run the Barnes Hut test to see if we are at the right
+            // distance.
+            let distance =
+                crate::js_math::pow(f64::from(own[NODE_X]) - rm[r + REGION_MASS_CENTER_X], 2.0)
+                    + crate::js_math::pow(
+                        f64::from(own[NODE_Y]) - rm[r + REGION_MASS_CENTER_Y],
                         2.0,
                     );
 
-                    let region_size = rm[r + REGION_SIZE];
+            let region_size = rm[r + REGION_SIZE];
 
-                    if (4.0 * region_size * region_size) / distance < theta_squared {
-                        // We treat the region as a single body, and we
-                        // repulse.
-                        let x_dist = f64::from(nm[n + NODE_X]) - rm[r + REGION_MASS_CENTER_X];
-                        let y_dist = f64::from(nm[n + NODE_Y]) - rm[r + REGION_MASS_CENTER_Y];
+            if (4.0 * region_size * region_size) / distance < theta_squared {
+                // We treat the region as a single body, and we repulse.
+                let x_dist = f64::from(own[NODE_X]) - rm[r + REGION_MASS_CENTER_X];
+                let y_dist = f64::from(own[NODE_Y]) - rm[r + REGION_MASS_CENTER_Y];
 
-                        if s.adjust_sizes {
-                            //-- Linear Anti-collision Repulsion.
-                            if distance > 0.0 {
-                                let factor = (coefficient
-                                    * f64::from(nm[n + NODE_MASS])
-                                    * rm[r + REGION_MASS])
-                                    / distance;
-
-                                add_f32(nm, n + NODE_DX, x_dist * factor);
-                                add_f32(nm, n + NODE_DY, y_dist * factor);
-                            } else if distance < 0.0 {
-                                // JS parity: unreachable in practice (distance is a sum of squares).
-                                let factor = (-coefficient
-                                    * f64::from(nm[n + NODE_MASS])
-                                    * rm[r + REGION_MASS])
-                                    / f64::sqrt(distance);
-
-                                add_f32(nm, n + NODE_DX, x_dist * factor);
-                                add_f32(nm, n + NODE_DY, y_dist * factor);
-                            }
-                        } else {
-                            //-- Linear Repulsion.
-                            if distance > 0.0 {
-                                let factor = (coefficient
-                                    * f64::from(nm[n + NODE_MASS])
-                                    * rm[r + REGION_MASS])
-                                    / distance;
-
-                                add_f32(nm, n + NODE_DX, x_dist * factor);
-                                add_f32(nm, n + NODE_DY, y_dist * factor);
-                            }
-                        }
-
-                        // When this is done, we iterate. We have to look
-                        // at the next sibling.
-                        let next_sibling = rm[r + REGION_NEXT_SIBLING];
-                        if next_sibling < 0.0 {
-                            break; // No next sibling: we have finished the tree.
-                        }
-                        r = next_sibling as usize;
-                        continue;
-                    }
-                    // The region is too close and we have to look at
-                    // sub-regions.
-                    r = rm[r + REGION_FIRST_CHILD] as usize;
-                    continue;
-                }
-                // The region has no sub-region.
-                // If there is a node r[0] and it is not n, then repulse.
-                let rn = rm[r + REGION_NODE];
-
-                if rn >= 0.0 && rn as usize != n {
-                    let rn_idx = rn as usize;
-                    let x_dist = f64::from(nm[n + NODE_X]) - f64::from(nm[rn_idx + NODE_X]);
-                    let y_dist = f64::from(nm[n + NODE_Y]) - f64::from(nm[rn_idx + NODE_Y]);
-
-                    let distance = x_dist * x_dist + y_dist * y_dist;
-
-                    if s.adjust_sizes {
-                        //-- Linear Anti-collision Repulsion.
-                        if distance > 0.0 {
-                            let factor = (coefficient
-                                * f64::from(nm[n + NODE_MASS])
-                                * f64::from(nm[rn_idx + NODE_MASS]))
+                if s.adjust_sizes {
+                    //-- Linear Anti-collision Repulsion.
+                    if distance > 0.0 {
+                        let factor =
+                            (coefficient * f64::from(own[NODE_MASS]) * rm[r + REGION_MASS])
                                 / distance;
 
-                            add_f32(nm, n + NODE_DX, x_dist * factor);
-                            add_f32(nm, n + NODE_DY, y_dist * factor);
-                        } else if distance < 0.0 {
-                            // JS parity: unreachable in practice (distance is a sum of squares).
-                            let factor = (-coefficient
-                                * f64::from(nm[n + NODE_MASS])
-                                * f64::from(nm[rn_idx + NODE_MASS]))
+                        add_f32(own, NODE_DX, x_dist * factor);
+                        add_f32(own, NODE_DY, y_dist * factor);
+                    } else if distance < 0.0 {
+                        // JS parity: unreachable in practice (distance is a sum of squares).
+                        let factor =
+                            (-coefficient * f64::from(own[NODE_MASS]) * rm[r + REGION_MASS])
                                 / f64::sqrt(distance);
 
-                            add_f32(nm, n + NODE_DX, x_dist * factor);
-                            add_f32(nm, n + NODE_DY, y_dist * factor);
-                        }
-                    } else {
-                        //-- Linear Repulsion.
-                        if distance > 0.0 {
-                            let factor = (coefficient
-                                * f64::from(nm[n + NODE_MASS])
-                                * f64::from(nm[rn_idx + NODE_MASS]))
+                        add_f32(own, NODE_DX, x_dist * factor);
+                        add_f32(own, NODE_DY, y_dist * factor);
+                    }
+                } else {
+                    //-- Linear Repulsion.
+                    if distance > 0.0 {
+                        let factor =
+                            (coefficient * f64::from(own[NODE_MASS]) * rm[r + REGION_MASS])
                                 / distance;
 
-                            add_f32(nm, n + NODE_DX, x_dist * factor);
-                            add_f32(nm, n + NODE_DY, y_dist * factor);
-                        }
+                        add_f32(own, NODE_DX, x_dist * factor);
+                        add_f32(own, NODE_DY, y_dist * factor);
                     }
                 }
 
@@ -223,7 +167,104 @@ pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
                 r = next_sibling as usize;
                 continue;
             }
+            // The region is too close and we have to look at sub-regions.
+            r = rm[r + REGION_FIRST_CHILD] as usize;
+            continue;
+        }
+        // The region has no sub-region.
+        // If there is a node r[0] and it is not n, then repulse.
+        let rn = rm[r + REGION_NODE];
 
+        if rn >= 0.0 && rn as usize != n {
+            let rn_idx = rn as usize;
+            let x_dist = f64::from(own[NODE_X]) - snapshot[rn_idx + NODE_X];
+            let y_dist = f64::from(own[NODE_Y]) - snapshot[rn_idx + NODE_Y];
+
+            let distance = x_dist * x_dist + y_dist * y_dist;
+
+            if s.adjust_sizes {
+                //-- Linear Anti-collision Repulsion.
+                if distance > 0.0 {
+                    let factor = (coefficient
+                        * f64::from(own[NODE_MASS])
+                        * snapshot[rn_idx + NODE_MASS])
+                        / distance;
+
+                    add_f32(own, NODE_DX, x_dist * factor);
+                    add_f32(own, NODE_DY, y_dist * factor);
+                } else if distance < 0.0 {
+                    // JS parity: unreachable in practice (distance is a sum of squares).
+                    let factor = (-coefficient
+                        * f64::from(own[NODE_MASS])
+                        * snapshot[rn_idx + NODE_MASS])
+                        / f64::sqrt(distance);
+
+                    add_f32(own, NODE_DX, x_dist * factor);
+                    add_f32(own, NODE_DY, y_dist * factor);
+                }
+            } else {
+                //-- Linear Repulsion.
+                if distance > 0.0 {
+                    let factor = (coefficient
+                        * f64::from(own[NODE_MASS])
+                        * snapshot[rn_idx + NODE_MASS])
+                        / distance;
+
+                    add_f32(own, NODE_DX, x_dist * factor);
+                    add_f32(own, NODE_DY, y_dist * factor);
+                }
+            }
+        }
+
+        // When this is done, we iterate. We have to look at the next
+        // sibling.
+        let next_sibling = rm[r + REGION_NEXT_SIBLING];
+        if next_sibling < 0.0 {
+            break; // No next sibling: we have finished the tree.
+        }
+        r = next_sibling as usize;
+    }
+}
+
+/// Applies repulsion forces to every node's DX/DY, a verbatim port of
+/// `iterate.js:360-564`.
+///
+/// Branches on `s.barnes_hut_optimize`: when set, walks the `RegionMatrix`
+/// built by [`crate::quadtree::build`] per node via [`bh_node_repulsion`]
+/// (`iterate.js:368-497`); otherwise runs the O(n^2) pairwise loop
+/// (`iterate.js:501-564`, further split on `s.adjust_sizes`, JS's
+/// `adjustSizes` anti-collision repulsion).
+///
+/// The Barnes-Hut per-node walk reads only the tree (`rm`) plus its own
+/// node's slots and writes only its own node's DX/DY -- deliberately kept
+/// that way (no cross-node writes) so Task 9's per-node parallelism is
+/// sound.
+pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
+    let order = nm.len();
+    let coefficient = s.scaling_ratio;
+
+    if s.barnes_hut_optimize {
+        let theta_squared = s.barnes_hut_theta * s.barnes_hut_theta;
+
+        // Read-only snapshot of every node's slots, widened to f64 --
+        // see `bh_node_repulsion`'s doc comment. Sequentially this snapshot
+        // changes nothing numerically versus reading `nm` directly; it
+        // exists so the exact same per-node body serves both this loop and
+        // Task 9's parallel one.
+        let snapshot: Vec<f64> = nm.iter().map(|&v| f64::from(v)).collect();
+
+        // Applying repulsion through regions (iterate.js:368-497).
+        let mut n = 0;
+        while n < order {
+            bh_node_repulsion(
+                s,
+                &mut nm[n..n + PPN],
+                n,
+                &snapshot,
+                rm,
+                coefficient,
+                theta_squared,
+            );
             n += PPN;
         }
     } else {
