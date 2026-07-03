@@ -4,3 +4,5 @@ pub mod js_math;
 pub mod matrices;
 pub mod quadtree;
 pub mod settings;
+
+pub use iterate::iterate;

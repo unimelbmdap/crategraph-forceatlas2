@@ -16,10 +16,15 @@
 //! force contributions to the same node's DX/DY across tree regions.
 //! `RegionMatrix` is `Vec<f64>` (a plain JS array of doubles, per
 //! `crate::quadtree`), read directly with no widening.
-#![allow(clippy::needless_range_loop, clippy::too_many_lines, clippy::similar_names)]
+#![allow(
+    clippy::needless_range_loop,
+    clippy::too_many_lines,
+    clippy::similar_names
+)]
 
 use crate::matrices::{
-    NODE_DX, NODE_DY, NODE_MASS, NODE_OLD_DX, NODE_OLD_DY, NODE_SIZE, NODE_X, NODE_Y, PPN,
+    EDGE_SOURCE, EDGE_TARGET, EDGE_WEIGHT, MAX_FORCE, NODE_CONVERGENCE, NODE_DX, NODE_DY,
+    NODE_FIXED, NODE_MASS, NODE_OLD_DX, NODE_OLD_DY, NODE_SIZE, NODE_X, NODE_Y, PPE, PPN,
     REGION_FIRST_CHILD, REGION_MASS, REGION_MASS_CENTER_X, REGION_MASS_CENTER_Y,
     REGION_NEXT_SIBLING, REGION_NODE, REGION_SIZE,
 };
@@ -30,11 +35,6 @@ use crate::settings::Settings;
 /// `+=`/`-=` onto the `NodeMatrix` in `iterate.js` must go through this
 /// (a `-=` is just `add_f32(nm, idx, -delta)`, since `x - y == x + (-y)`
 /// exactly in IEEE-754, no extra rounding introduced).
-// `add_f32`/`init_phase`/`repulsion_phase` are only called from this
-// module's own tests until Task 7 wires them into the full per-iteration
-// entrypoint (gravity + attraction + force application), so `-D warnings`
-// would otherwise flag them dead. Allowed here, not silenced crate-wide.
-#[allow(dead_code)]
 fn add_f32(nm: &mut [f32], idx: usize, delta: f64) {
     nm[idx] = (f64::from(nm[idx]) + delta) as f32;
 }
@@ -48,7 +48,6 @@ fn add_f32(nm: &mut [f32], idx: usize, delta: f64) {
 /// variable `undefined` (it is only ever read from the attraction phase
 /// under the same flag in Task 7); this port returns `0.0` in that case,
 /// an unused placeholder rather than a meaningful zero.
-#[allow(dead_code)]
 pub(crate) fn init_phase(s: &Settings, nm: &mut [f32]) -> f64 {
     let order = nm.len();
 
@@ -89,7 +88,6 @@ pub(crate) fn init_phase(s: &Settings, nm: &mut [f32]) -> f64 {
 /// node's slots and writes only its own node's DX/DY -- deliberately kept
 /// that way (no cross-node writes) so Task 9's per-node parallelism is
 /// sound.
-#[allow(dead_code)]
 pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
     let order = nm.len();
     let coefficient = s.scaling_ratio;
@@ -297,6 +295,279 @@ pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
     }
 }
 
+/// Applies gravity forces to every node's DX/DY, a verbatim port of
+/// `iterate.js:567-591`.
+///
+/// Branches on `s.strong_gravity_mode`: the strong branch pulls every node
+/// toward the origin with a distance-independent force, while the linear
+/// branch (graphology's "Linear Anti-collision Repulsion n" comment,
+/// verbatim) divides by distance.
+pub(crate) fn gravity_phase(s: &Settings, nm: &mut [f32]) {
+    let order = nm.len();
+    let g = s.gravity / s.scaling_ratio;
+    let coefficient = s.scaling_ratio;
+
+    let mut n = 0;
+    while n < order {
+        let mut factor = 0.0f64;
+
+        // Common to both methods (iterate.js:574-577).
+        let x_dist = f64::from(nm[n + NODE_X]);
+        let y_dist = f64::from(nm[n + NODE_Y]);
+        let distance =
+            f64::sqrt(crate::js_math::pow(x_dist, 2.0) + crate::js_math::pow(y_dist, 2.0));
+
+        if s.strong_gravity_mode {
+            //-- Strong gravity.
+            if distance > 0.0 {
+                factor = coefficient * f64::from(nm[n + NODE_MASS]) * g;
+            }
+        } else {
+            //-- Linear Anti-collision Repulsion n.
+            if distance > 0.0 {
+                factor = (coefficient * f64::from(nm[n + NODE_MASS]) * g) / distance;
+            }
+        }
+
+        // Updating node's dx and dy.
+        add_f32(nm, n + NODE_DX, -(x_dist * factor));
+        add_f32(nm, n + NODE_DY, -(y_dist * factor));
+
+        n += PPN;
+    }
+}
+
+/// Applies attraction forces along every edge to both endpoints' DX/DY, a
+/// verbatim port of `iterate.js:593-688`.
+///
+/// `outbound_att_compensation` is the value returned by [`init_phase`]
+/// (JS's `outboundAttCompensation`, only meaningful when
+/// `s.outbound_attraction_distribution` is set).
+///
+/// The JS body is a flat if/else ladder over `adjustSizes` x `linLogMode` x
+/// `outboundAttractionDistribution` (8 leaves, 2 of which collapse to the
+/// same "set distance=1" shape); every leaf is kept distinct here rather
+/// than merged, matching the brief's "keep it flat" instruction.
+pub(crate) fn attraction_phase(
+    s: &Settings,
+    nm: &mut [f32],
+    em: &[f32],
+    outbound_att_compensation: f64,
+) {
+    let size = em.len();
+
+    // iterate.js:595-596.
+    let coefficient = 1.0
+        * if s.outbound_attraction_distribution {
+            outbound_att_compensation
+        } else {
+            1.0
+        };
+
+    let mut e = 0;
+    while e < size {
+        let n1 = em[e + EDGE_SOURCE] as usize;
+        let n2 = em[e + EDGE_TARGET] as usize;
+        let w = f64::from(em[e + EDGE_WEIGHT]);
+
+        // Edge weight influence (iterate.js:606).
+        let ewc = crate::js_math::pow(w, s.edge_weight_influence);
+
+        // Common measures (iterate.js:609-610).
+        let x_dist = f64::from(nm[n1 + NODE_X]) - f64::from(nm[n2 + NODE_X]);
+        let y_dist = f64::from(nm[n1 + NODE_Y]) - f64::from(nm[n2 + NODE_Y]);
+
+        let mut factor = 0.0f64;
+        let mut distance;
+
+        // Applying attraction to nodes (iterate.js:612-677).
+        if s.adjust_sizes {
+            distance = f64::sqrt(x_dist * x_dist + y_dist * y_dist)
+                - f64::from(nm[n1 + NODE_SIZE])
+                - f64::from(nm[n2 + NODE_SIZE]);
+
+            if s.lin_log_mode {
+                if s.outbound_attraction_distribution {
+                    //-- LinLog Degree Distributed Anti-collision Attraction.
+                    if distance > 0.0 {
+                        factor = (-coefficient * ewc * crate::js_math::log(1.0 + distance))
+                            / distance
+                            / f64::from(nm[n1 + NODE_MASS]);
+                    }
+                } else {
+                    //-- LinLog Anti-collision Attraction.
+                    if distance > 0.0 {
+                        factor =
+                            (-coefficient * ewc * crate::js_math::log(1.0 + distance)) / distance;
+                    }
+                }
+            } else if s.outbound_attraction_distribution {
+                //-- Linear Degree Distributed Anti-collision Attraction.
+                if distance > 0.0 {
+                    factor = (-coefficient * ewc) / f64::from(nm[n1 + NODE_MASS]);
+                }
+            } else {
+                //-- Linear Anti-collision Attraction.
+                if distance > 0.0 {
+                    factor = -coefficient * ewc;
+                }
+            }
+        } else {
+            distance =
+                f64::sqrt(crate::js_math::pow(x_dist, 2.0) + crate::js_math::pow(y_dist, 2.0));
+
+            if s.lin_log_mode {
+                if s.outbound_attraction_distribution {
+                    //-- LinLog Degree Distributed Attraction.
+                    if distance > 0.0 {
+                        factor = (-coefficient * ewc * crate::js_math::log(1.0 + distance))
+                            / distance
+                            / f64::from(nm[n1 + NODE_MASS]);
+                    }
+                } else {
+                    //-- LinLog Attraction.
+                    if distance > 0.0 {
+                        factor =
+                            (-coefficient * ewc * crate::js_math::log(1.0 + distance)) / distance;
+                    }
+                }
+            } else if s.outbound_attraction_distribution {
+                //-- Linear Attraction Mass Distributed.
+                // NOTE: Distance is set to 1 to override next condition.
+                distance = 1.0;
+                factor = (-coefficient * ewc) / f64::from(nm[n1 + NODE_MASS]);
+            } else {
+                //-- Linear Attraction.
+                // NOTE: Distance is set to 1 to override next condition.
+                distance = 1.0;
+                factor = -coefficient * ewc;
+            }
+        }
+
+        // Updating nodes' dx and dy (iterate.js:679-688).
+        if distance > 0.0 {
+            add_f32(nm, n1 + NODE_DX, x_dist * factor);
+            add_f32(nm, n1 + NODE_DY, y_dist * factor);
+
+            add_f32(nm, n2 + NODE_DX, -(x_dist * factor));
+            add_f32(nm, n2 + NODE_DY, -(y_dist * factor));
+        }
+
+        e += PPE;
+    }
+}
+
+/// Integrates accumulated forces into node positions, a verbatim port of
+/// `iterate.js:691-789`.
+///
+/// Branches on `s.adjust_sizes`: the anti-collision path caps the force
+/// magnitude at [`MAX_FORCE`] before computing swinging/traction, and does
+/// not touch `NODE_CONVERGENCE`; the standard path has no force cap but
+/// folds the per-node `NODE_CONVERGENCE` value into `nodespeed` and updates
+/// it afterwards. Both paths skip fixed nodes (`NODE_FIXED == 1`) and
+/// finish by dividing the displacement by `s.slow_down`.
+pub(crate) fn apply_forces_phase(s: &Settings, nm: &mut [f32]) {
+    let order = nm.len();
+
+    if s.adjust_sizes {
+        // MATH: sqrt and square distances (iterate.js:696-741).
+        let mut n = 0;
+        while n < order {
+            if nm[n + NODE_FIXED] != 1.0 {
+                let mut dx = f64::from(nm[n + NODE_DX]);
+                let mut dy = f64::from(nm[n + NODE_DY]);
+
+                let force = f64::sqrt(crate::js_math::pow(dx, 2.0) + crate::js_math::pow(dy, 2.0));
+
+                if force > MAX_FORCE {
+                    dx = (dx * MAX_FORCE) / force;
+                    dy = (dy * MAX_FORCE) / force;
+                    nm[n + NODE_DX] = dx as f32;
+                    nm[n + NODE_DY] = dy as f32;
+                }
+
+                let old_dx = f64::from(nm[n + NODE_OLD_DX]);
+                let old_dy = f64::from(nm[n + NODE_OLD_DY]);
+
+                let swinging = f64::from(nm[n + NODE_MASS])
+                    * f64::sqrt((old_dx - dx) * (old_dx - dx) + (old_dy - dy) * (old_dy - dy));
+
+                let traction =
+                    f64::sqrt((old_dx + dx) * (old_dx + dx) + (old_dy + dy) * (old_dy + dy)) / 2.0;
+
+                let nodespeed =
+                    (0.1 * crate::js_math::log(1.0 + traction)) / (1.0 + f64::sqrt(swinging));
+
+                // Updating node's position.
+                let new_x = f64::from(nm[n + NODE_X]) + dx * (nodespeed / s.slow_down);
+                nm[n + NODE_X] = new_x as f32;
+
+                let new_y = f64::from(nm[n + NODE_Y]) + dy * (nodespeed / s.slow_down);
+                nm[n + NODE_Y] = new_y as f32;
+            }
+
+            n += PPN;
+        }
+    } else {
+        let mut n = 0;
+        while n < order {
+            if nm[n + NODE_FIXED] != 1.0 {
+                let dx = f64::from(nm[n + NODE_DX]);
+                let dy = f64::from(nm[n + NODE_DY]);
+                let old_dx = f64::from(nm[n + NODE_OLD_DX]);
+                let old_dy = f64::from(nm[n + NODE_OLD_DY]);
+
+                let swinging = f64::from(nm[n + NODE_MASS])
+                    * f64::sqrt((old_dx - dx) * (old_dx - dx) + (old_dy - dy) * (old_dy - dy));
+
+                let traction =
+                    f64::sqrt((old_dx + dx) * (old_dx + dx) + (old_dy + dy) * (old_dy + dy)) / 2.0;
+
+                let nodespeed = (f64::from(nm[n + NODE_CONVERGENCE])
+                    * crate::js_math::log(1.0 + traction))
+                    / (1.0 + f64::sqrt(swinging));
+
+                // Updating node convergence.
+                let convergence = f64::min(
+                    1.0,
+                    f64::sqrt(
+                        (nodespeed * (crate::js_math::pow(dx, 2.0) + crate::js_math::pow(dy, 2.0)))
+                            / (1.0 + f64::sqrt(swinging)),
+                    ),
+                );
+                nm[n + NODE_CONVERGENCE] = convergence as f32;
+
+                // Updating node's position.
+                let new_x = f64::from(nm[n + NODE_X]) + dx * (nodespeed / s.slow_down);
+                nm[n + NODE_X] = new_x as f32;
+
+                let new_y = f64::from(nm[n + NODE_Y]) + dy * (nodespeed / s.slow_down);
+                nm[n + NODE_Y] = new_y as f32;
+            }
+
+            n += PPN;
+        }
+    }
+}
+
+/// Runs one full ForceAtlas2 iteration over `nm`/`em` in place, a verbatim
+/// composition of `iterate.js`'s phase order: init, (quadtree build when
+/// `s.barnes_hut_optimize`), repulsion, gravity, attraction, apply forces.
+pub fn iterate(s: &Settings, nm: &mut [f32], em: &[f32]) {
+    let outbound_att_compensation = init_phase(s, nm);
+
+    if s.barnes_hut_optimize {
+        let rm = crate::quadtree::build(nm);
+        repulsion_phase(s, nm, &rm);
+    } else {
+        repulsion_phase(s, nm, &[]);
+    }
+
+    gravity_phase(s, nm);
+    attraction_phase(s, nm, em, outbound_att_compensation);
+    apply_forces_phase(s, nm);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,7 +590,10 @@ mod tests {
     #[test]
     fn pairwise_repulsion_is_equal_and_opposite_on_x_axis() {
         let mut nm = two_nodes();
-        let s = Settings { barnes_hut_optimize: false, ..Settings::default() };
+        let s = Settings {
+            barnes_hut_optimize: false,
+            ..Settings::default()
+        };
         init_phase(&s, &mut nm);
         repulsion_phase(&s, &mut nm, &[]);
         assert!(nm[NODE_DX] < 0.0); // node 0 pushed -x
@@ -335,16 +609,72 @@ mod tests {
         let coords = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (5.0, 5.0)];
         let (mut nm_bh, _) = graph_to_matrices(4, &[], None, &coords);
         let mut nm_pw = nm_bh.clone();
-        let s_pw = Settings { barnes_hut_optimize: false, ..Settings::default() };
-        let s_bh = Settings { barnes_hut_optimize: true, ..Settings::default() };
+        let s_pw = Settings {
+            barnes_hut_optimize: false,
+            ..Settings::default()
+        };
+        let s_bh = Settings {
+            barnes_hut_optimize: true,
+            ..Settings::default()
+        };
         init_phase(&s_pw, &mut nm_pw);
         repulsion_phase(&s_pw, &mut nm_pw, &[]);
         let rm = crate::quadtree::build(&nm_bh);
         init_phase(&s_bh, &mut nm_bh);
         repulsion_phase(&s_bh, &mut nm_bh, &rm);
         for i in 0..4 {
-            assert_eq!(nm_bh[i * PPN + NODE_DX].signum(), nm_pw[i * PPN + NODE_DX].signum());
-            assert_eq!(nm_bh[i * PPN + NODE_DY].signum(), nm_pw[i * PPN + NODE_DY].signum());
+            assert_eq!(
+                nm_bh[i * PPN + NODE_DX].signum(),
+                nm_pw[i * PPN + NODE_DX].signum()
+            );
+            assert_eq!(
+                nm_bh[i * PPN + NODE_DY].signum(),
+                nm_pw[i * PPN + NODE_DY].signum()
+            );
         }
+    }
+
+    #[test]
+    fn gravity_pulls_toward_origin() {
+        let (mut nm, _) = graph_to_matrices(1, &[], None, &[(3.0, 4.0)]);
+        let s = Settings {
+            gravity: 1.0,
+            ..Settings::default()
+        };
+        init_phase(&s, &mut nm);
+        gravity_phase(&s, &mut nm);
+        assert!(nm[NODE_DX] < 0.0 && nm[NODE_DY] < 0.0);
+    }
+
+    #[test]
+    fn attraction_pulls_edge_endpoints_together() {
+        let (mut nm, em) = graph_to_matrices(2, &[(0, 1)], None, &[(0.0, 0.0), (10.0, 0.0)]);
+        let s = Settings::default();
+        init_phase(&s, &mut nm);
+        attraction_phase(&s, &mut nm, &em, 1.0);
+        assert!(nm[NODE_DX] > 0.0); // node 0 pulled +x
+        assert!(nm[PPN + NODE_DX] < 0.0); // node 1 pulled -x
+    }
+
+    #[test]
+    fn full_iteration_moves_connected_pair_closer_and_is_finite() {
+        let (mut nm, em) = graph_to_matrices(2, &[(0, 1)], None, &[(0.0, 0.0), (10.0, 0.0)]);
+        let before = (nm[PPN + NODE_X] - nm[NODE_X]).abs();
+        iterate(&Settings::default(), &mut nm, &em);
+        let after = (nm[PPN + NODE_X] - nm[NODE_X]).abs();
+        assert!(after < before);
+        assert!(nm.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn max_force_caps_displacement_inputs() {
+        // adjustSizes path (iterate.js:699-708) caps dx/dy at MAX_FORCE
+        let (mut nm, em) = graph_to_matrices(2, &[(0, 1)], None, &[(0.0, 0.0), (1e-6, 0.0)]);
+        let s = Settings {
+            adjust_sizes: true,
+            ..Settings::default()
+        };
+        iterate(&s, &mut nm, &em);
+        assert!(nm.iter().all(|v| v.is_finite()));
     }
 }
