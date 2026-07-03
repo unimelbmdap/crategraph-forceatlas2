@@ -14,3 +14,8 @@ dependencies = ["numpy>=1.24"]
 manifest-path = "bindings/Cargo.toml"
 module-name = "crategraph_forceatlas2._native"
 features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
