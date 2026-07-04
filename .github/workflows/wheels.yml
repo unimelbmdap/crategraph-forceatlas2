@@ -209,7 +209,8 @@ jobs:
   # ---------------------------------------------------------------------
   publish:
     name: publish to PyPI
-    if: ${{ false }} # enable when battle-tested
+    # Publishes ONLY on v* tag pushes; workflow_dispatch runs stay dry.
+    if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - build-manylinux
       - build-macos
@@ -236,8 +237,8 @@ jobs:
       # `crategraph-forceatlas2` project at
       # https://pypi.org/manage/project/crategraph-forceatlas2/settings/publishing/
       # before flipping the job-level `if:` above.
-      # - name: Publish to PyPI
-      #   uses: pypa/gh-action-pypi-publish@release/v1
-      #   with:
-      #     packages-dir: dist
-      #     skip-existing: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
