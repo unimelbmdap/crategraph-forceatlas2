@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "crategraph-forceatlas2"
 version = "0.1.0"
-description = "Fast MIT-licensed ForceAtlas2 layout: a faithful Rust port of graphology-layout-forceatlas2"
+description = "Fast ForceAtlas2 layout: a Rust port of graphology-layout-forceatlas2"
 readme = "README.md"
 authors = [{ name = "Daniel Russo-Batterham" }]
 requires-python = ">=3.10"
