@@ -9,6 +9,23 @@ The ForceAtlas2 algorithm is described in
 Graph Layout Algorithm for Handy Network Visualization Designed for the Gephi
 Software." PLoS ONE 9(6): e98679](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0098679).
 
+## Quick start
+
+```bash
+pip install crategraph-forceatlas2
+```
+
+```python
+import crategraph_forceatlas2 as cfa2
+
+edges = [(0, 1), (1, 2), (2, 0), (2, 3)]
+positions = cfa2.layout(4, edges)  # (4, 2) numpy array of x, y coordinates
+```
+
+Settings use graphology's camelCase names, e.g.
+`cfa2.layout(4, edges, iterations=100, gravity=0.05, scalingRatio=10)`.
+Layouts are deterministic; pass `seed=` to vary them.
+
 ## Development
 
 ```bash
