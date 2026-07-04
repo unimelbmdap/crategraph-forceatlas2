@@ -165,9 +165,9 @@ jobs:
         with:
           name: wheel-manylinux-aarch64
           path: dist
-      # No native aarch64 Linux runner is used here on purpose (per the
-      # brief): the manylinux aarch64 wheel is smoke-tested by emulating
-      # aarch64 under QEMU via uraimo/run-on-arch-action, using the actual
+      # No native aarch64 Linux runner is used here on purpose: the
+      # manylinux aarch64 wheel is smoke-tested by emulating aarch64 under
+      # QEMU via uraimo/run-on-arch-action, using the actual
       # manylinux_2_28 aarch64 image (which ships every CPython under
       # /opt/python/cpXYZ-cpXYZ/) so the interpreter matches what the wheel
       # was built/tagged against.

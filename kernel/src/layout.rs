@@ -1,7 +1,7 @@
 //! Multi-iteration layout driver.
 //!
-//! `iterate::iterate` (Tasks 1-8) runs exactly one ForceAtlas2 iteration and
-//! is verified bit-exact against graphology-layout-forceatlas2 (the
+//! `iterate::iterate` runs exactly one ForceAtlas2 iteration and is verified
+//! bit-exact against graphology-layout-forceatlas2 (the
 //! `kernel/tests/parity.rs` gate). This module adds the piece graphology's
 //! JS side leaves to its caller: repeatedly running iterations, invoking a
 //! per-iteration callback (so a host can report progress or abort), and --
@@ -11,11 +11,11 @@
 //! Parallelism is deliberately narrow: only the Barnes-Hut per-node
 //! repulsion loop (`iterate::bh_node_repulsion`) is split across threads.
 //! Every other phase (init, gravity, attraction, apply, tree build, and the
-//! O(n^2) pairwise repulsion fallback) stays sequential, matching the plan's
-//! non-negotiable contract. Because each node's Barnes-Hut walk reads only a
-//! read-only snapshot of other nodes' positions/mass and writes only its own
-//! DX/DY (via the same per-addition f32 store discipline the sequential path
-//! uses), splitting the loop across `threads` can never change the result:
+//! O(n^2) pairwise repulsion fallback) stays sequential. Because each node's
+//! Barnes-Hut walk reads only a read-only snapshot of other nodes'
+//! positions/mass and writes only its own DX/DY (via the same per-addition
+//! f32 store discipline the sequential path uses), splitting the loop
+//! across `threads` can never change the result:
 //! `threads_do_not_change_the_result` below asserts bit-identical output
 //! across thread counts.
 use rayon::prelude::*;
@@ -32,8 +32,8 @@ use crate::settings::Settings;
 /// Signals that the caller's `on_iteration` callback requested an abort.
 ///
 /// Mirrors a JS caller throwing from inside a progress callback: graphology
-/// itself has no such hook, but every host embedding this kernel (Task 10)
-/// needs one to cancel long layouts, so `run_layout` treats an `Err` return
+/// itself has no such hook, but every host embedding this kernel needs one
+/// to cancel long layouts, so `run_layout` treats an `Err` return
 /// from the callback as "stop now" and propagates it as this unit-struct
 /// error rather than a full error enum, since there is exactly one way to
 /// abort and no extra detail to carry.
@@ -53,8 +53,7 @@ pub struct LayoutAborted;
 /// across every iteration) and, when `s.barnes_hut_optimize` is set, splits
 /// the per-node Barnes-Hut repulsion walk across it. `s.barnes_hut_optimize
 /// == false` always runs the O(n^2) pairwise repulsion sequentially
-/// regardless of `threads`, per the plan's contract that only the
-/// Barnes-Hut loop parallelises.
+/// regardless of `threads`: only the Barnes-Hut loop ever parallelises.
 pub fn run_layout(
     s: &Settings,
     nm: &mut [f32],

@@ -3,14 +3,13 @@ graphology-layout-forceatlas2 (via tests/node_reference/reference.mjs), run
 on identical payloads (same graph, same seeded init, same settings, same
 iteration count).
 
-Both pipelines store node state in f32 (see Task 3/8 notes), and Task 3
-established that every settings profile this project ships uses libm::pow's
-exactly-bit-matching special-cased paths (y in {0, 0.5, 1, 2}); the only known
-1-ULP divergence from V8 is in pow's general path, which infer_settings()
-never reaches. So the assertion here is EXACT equality (np.array_equal), not
-a tolerance -- see kernel bit-parity gate 10756aa (Task 8, 16/16 fixtures
-bit-exact vs graphology 0.10.1) for the underlying guarantee this test is
-extending end-to-end through the public Python API.
+Both pipelines store node state in f32, and every settings profile this
+project ships uses libm::pow's exactly-bit-matching special-cased paths (y in
+{0, 0.5, 1, 2}); the only known 1-ULP divergence from V8 is in pow's general
+path, which infer_settings() never reaches. So the assertion here is EXACT
+equality (np.array_equal), not a tolerance -- see kernel bit-parity gate
+10756aa (16/16 fixtures bit-exact vs graphology 0.10.1) for the underlying
+guarantee this test is extending end-to-end through the public Python API.
 """
 
 import json

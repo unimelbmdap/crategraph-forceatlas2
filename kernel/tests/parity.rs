@@ -103,8 +103,8 @@ fn kernel_matches_graphology_bit_for_bit() {
             expected.len()
         );
 
-        // Report only the FIRST mismatching slot per fixture (per the
-        // debugging protocol: bisect from the earliest divergence).
+        // Report only the FIRST mismatching slot per fixture, to bisect
+        // from the earliest divergence.
         let mut first_mismatch = None;
         for (slot, (&got_f32, &want_bits)) in nm.iter().zip(expected.iter()).enumerate() {
             let got_bits = got_f32.to_bits();

@@ -308,13 +308,13 @@ mod tests {
         assert_eq!(rm[REGION_SIZE], 4.0);
     }
 
-    // NOTE (Codex review): do NOT test mass conservation or exact barycentres --
-    // the real JS does not maintain them. When a leaf splits, the parent's mass
-    // is set from the old node only (iterate.js:306) and a new node landing in
+    // NOTE: do NOT test mass conservation or exact barycentres -- the real
+    // JS does not maintain them. When a leaf splits, the parent's mass is
+    // set from the old node only (iterate.js:306) and a new node landing in
     // a different quadrant is recorded WITHOUT updating that parent's mass
-    // centre (iterate.js:350). A "fixed" Rust version would break parity. Test
-    // only behaviours the JS guarantees; Task 8's bit-parity fixtures are the
-    // real correctness gate for the tree.
+    // centre (iterate.js:350). A "fixed" Rust version would break parity.
+    // Test only behaviours the JS guarantees; the bit-parity fixtures are
+    // the real correctness gate for the tree.
 
     #[test]
     fn coincident_nodes_trigger_subdivision_fallback_without_hanging() {

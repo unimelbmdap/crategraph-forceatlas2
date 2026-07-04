@@ -46,8 +46,8 @@ fn add_f32(nm: &mut [f32], idx: usize, delta: f64) {
 /// Returns `outboundAttCompensation`. When
 /// `s.outbound_attraction_distribution` is `false`, the JS leaves that
 /// variable `undefined` (it is only ever read from the attraction phase
-/// under the same flag in Task 7); this port returns `0.0` in that case,
-/// an unused placeholder rather than a meaningful zero.
+/// under the same flag); this port returns `0.0` in that case, an unused
+/// placeholder rather than a meaningful zero.
 pub(crate) fn init_phase(s: &Settings, nm: &mut [f32]) -> f64 {
     let order = nm.len();
 
@@ -88,7 +88,7 @@ pub(crate) fn init_phase(s: &Settings, nm: &mut [f32]) -> f64 {
 /// the snapshot instead of a live `NodeMatrix` is numerically identical --
 /// it exists only so this function can be called from a `rayon` parallel
 /// chunk loop, where the aliasing rules forbid reading the full matrix
-/// while it is mutably chunked (Task 9). `coefficient` and `theta_squared`
+/// while it is mutably chunked. `coefficient` and `theta_squared`
 /// are `repulsion_phase`'s precomputed `s.scaling_ratio` and
 /// `s.barnes_hut_theta^2`, hoisted out of the per-node loop by the caller
 /// exactly as the JS does.
@@ -237,8 +237,7 @@ pub(crate) fn bh_node_repulsion(
 ///
 /// The Barnes-Hut per-node walk reads only the tree (`rm`) plus its own
 /// node's slots and writes only its own node's DX/DY -- deliberately kept
-/// that way (no cross-node writes) so Task 9's per-node parallelism is
-/// sound.
+/// that way (no cross-node writes) so its per-node parallelism is sound.
 pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
     let order = nm.len();
     let coefficient = s.scaling_ratio;
@@ -250,7 +249,7 @@ pub(crate) fn repulsion_phase(s: &Settings, nm: &mut [f32], rm: &[f64]) {
         // see `bh_node_repulsion`'s doc comment. Sequentially this snapshot
         // changes nothing numerically versus reading `nm` directly; it
         // exists so the exact same per-node body serves both this loop and
-        // Task 9's parallel one.
+        // the parallel one.
         let snapshot: Vec<f64> = nm.iter().map(|&v| f64::from(v)).collect();
 
         // Applying repulsion through regions (iterate.js:368-497).
@@ -388,7 +387,7 @@ pub(crate) fn gravity_phase(s: &Settings, nm: &mut [f32]) {
 /// The JS body is a flat if/else ladder over `adjustSizes` x `linLogMode` x
 /// `outboundAttractionDistribution` (8 leaves, 2 of which collapse to the
 /// same "set distance=1" shape); every leaf is kept distinct here rather
-/// than merged, matching the brief's "keep it flat" instruction.
+/// than merged.
 pub(crate) fn attraction_phase(
     s: &Settings,
     nm: &mut [f32],

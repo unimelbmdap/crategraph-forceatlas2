@@ -14,7 +14,7 @@ for (let i = 0; i < n_nodes; i++) graph.addNode(i, { x: init[i][0], y: init[i][1
 edges.forEach(([u, v], k) =>
   graph.mergeUndirectedEdge(u, v, weights ? { weight: weights[k] } : {}));
 
-// Codex review fixes:
+// Two gotchas when driving graphology's iterate()/helpers.js directly:
 // - graphToByteArrays calls getEdgeWeight UNCONDITIONALLY (helpers.js:154), so
 //   passing null crashes — unweighted fixtures need a constant-1 getter.
 // - iterate() reads settings directly with NO defaults merge (index.js:55 does

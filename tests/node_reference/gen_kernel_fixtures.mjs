@@ -33,7 +33,7 @@ const coord = () => rand() * 10 - 5; // spread coords over [-5, 5)
 // canonicalised (u < v) and de-duplicated as they're generated -- the Rust
 // builder does not dedupe, so a raw duplicate would make graphToByteArrays
 // (which uses mergeUndirectedEdge, dedupes) and graph_to_matrices compute
-// different edge sets for the same fixture (Codex finding).
+// different edge sets for the same fixture.
 function buildRandomGraph(n, targetEdges) {
   const init = Array.from({ length: n }, () => [coord(), coord()]);
   const seen = new Set();

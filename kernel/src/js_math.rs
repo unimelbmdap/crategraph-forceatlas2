@@ -11,13 +11,12 @@
 //!
 //! A prior revision of this module vendored a byte-faithful Rust port of
 //! V8's own fdlibm `pow` (`v8::base::ieee754::legacy::pow`,
-//! `src/base/ieee754.cc`) to investigate a 1-ULP mismatch on `pow(7, 1.5)`
-//! (see the task report referenced in git history). That port reproduced
-//! `libm::pow`'s answer bit-for-bit on every golden input, including the
-//! mismatching one, confirming the two implementations are the same
-//! algorithm and that the gap is not a `libm` translation bug. The vendored
-//! copy was therefore removed in favour of this single, dependency-minimal
-//! re-export: this module exports exactly one `pow`.
+//! `src/base/ieee754.cc`) to investigate a 1-ULP mismatch on `pow(7, 1.5)`.
+//! That port reproduced `libm::pow`'s answer bit-for-bit on every golden
+//! input, including the mismatching one, confirming the two implementations
+//! are the same algorithm and that the gap is not a `libm` translation bug.
+//! The vendored copy was therefore removed in favour of this single,
+//! dependency-minimal re-export: this module exports exactly one `pow`.
 
 /// Natural logarithm, bit-identical to V8's `Math.log` on every golden
 /// input (see the bit-parity test below).
