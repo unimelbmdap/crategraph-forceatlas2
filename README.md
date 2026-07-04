@@ -1,8 +1,7 @@
 # crategraph-forceatlas2
 
-A fast, MIT-licensed ForceAtlas2 graph layout for Python, implemented as a
-faithful Rust port of the JavaScript
-[`graphology-layout-forceatlas2`](https://github.com/graphology/graphology-layout-forceatlas2)
+A fast ForceAtlas2 graph layout for Python, implemented as a Rust port of the JavaScript
+[`graphology-layout-forceatlas2`](https://github.com/graphology/graphology/tree/master/src/layout-forceatlas2)
 package, with credit to its original authors.
 
 ## Development
