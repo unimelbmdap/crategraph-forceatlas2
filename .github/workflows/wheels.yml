@@ -111,6 +111,13 @@ jobs:
         platform: [linux-x86_64, macos-x86_64, macos-aarch64, windows-x86_64]
         python-version: ["3.10", "3.13"]
         numpy-spec: ["numpy<2", "numpy>=2"]
+        # NumPy 1.x never shipped Python 3.13 wheels; pip falls back to a
+        # from-source build that is broken on several platforms (numpy's own
+        # MinGW build warns "crashes are to be expected"). The combination is
+        # unsupported upstream, so it is excluded rather than smoke-tested.
+        exclude:
+          - python-version: "3.13"
+            numpy-spec: "numpy<2"
         # Extra keys merged onto every (platform, python-version, numpy-spec)
         # combination whose `platform` matches — this does NOT add new job
         # combinations, it just attaches `os` / `wheel-artifact` to the ones
@@ -160,6 +167,11 @@ jobs:
       matrix:
         python-version: ["3.10", "3.13"]
         numpy-spec: ["numpy<2", "numpy>=2"]
+        # Same upstream-unsupported combination excluded as in the main smoke
+        # matrix: NumPy 1.x has no Python 3.13 support.
+        exclude:
+          - python-version: "3.13"
+            numpy-spec: "numpy<2"
     steps:
       - uses: actions/download-artifact@v4
         with:
