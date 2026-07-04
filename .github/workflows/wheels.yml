@@ -21,8 +21,8 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
       - name: Build abi3 wheel
@@ -31,7 +31,7 @@ jobs:
           target: ${{ matrix.target }}
           manylinux: auto
           args: --release --out dist -i 3.10
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-manylinux-${{ matrix.target }}
           path: dist/*.whl
@@ -47,8 +47,8 @@ jobs:
       matrix:
         target: [x86_64, aarch64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
       - name: Build abi3 wheel
@@ -56,7 +56,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist -i 3.10
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-macos-${{ matrix.target }}
           path: dist/*.whl
@@ -65,8 +65,8 @@ jobs:
     name: build wheel (windows x86_64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
           architecture: x64
@@ -75,7 +75,7 @@ jobs:
         with:
           target: x64
           args: --release --out dist -i 3.10
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-windows-x86_64
           path: dist/*.whl
@@ -84,13 +84,13 @@ jobs:
     name: build sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
           command: sdist
           args: --out dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -137,10 +137,10 @@ jobs:
             wheel-artifact: wheel-windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.wheel-artifact }}
           path: dist
@@ -173,7 +173,7 @@ jobs:
           - python-version: "3.13"
             numpy-spec: "numpy<2"
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: wheel-manylinux-aarch64
           path: dist
@@ -184,7 +184,7 @@ jobs:
       # /opt/python/cpXYZ-cpXYZ/) so the interpreter matches what the wheel
       # was built/tagged against.
       - name: Install + smoke-test under QEMU
-        uses: uraimo/run-on-arch-action@v2
+        uses: uraimo/run-on-arch-action@v3
         with:
           arch: aarch64
           distro: none
@@ -222,12 +222,12 @@ jobs:
     permissions:
       id-token: write # required for PyPI trusted publishing (OIDC)
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: wheel-*
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdist
           path: dist
