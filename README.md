@@ -10,7 +10,7 @@ Graph Layout Algorithm for Handy Network Visualization Designed for the Gephi
 Software." PLoS ONE 9(6): e98679](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0098679).
 
 The initial development of this repository was carried out with the assistance of the **Fable 5**
-Anthropic model. See [AGENTS.md](AGENTS.md) for an overview of the repository aimed at AI coding agents.
+Anthropic model. See [AGENTS.md](AGENTS.md) for an overview of the repository aimed at coding agents.
 
 ## Quick start
 
